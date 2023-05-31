@@ -9,6 +9,7 @@ namespace Microsoft.ServiceFabric.Services.Runtime
     using System.Collections.Generic;
     using System.Diagnostics;
     using System.Fabric;
+    using System.Linq;
     using System.Threading;
     using System.Threading.Tasks;
     using Microsoft.ServiceFabric.Data;
@@ -137,7 +138,7 @@ namespace Microsoft.ServiceFabric.Services.Runtime
                 "ChangeRoleAsync : new role {0}",
                 newRole);
 
-            await this.CloseCommunicationListenersAsync(cancellationToken);
+            await this.CloseCommunicationListenersAsync(newRole, cancellationToken);
             await this.stateProviderReplica.ChangeRoleAsync(newRole, cancellationToken);
 
             if (newRole == ReplicaRole.Primary)
@@ -198,7 +199,7 @@ namespace Microsoft.ServiceFabric.Services.Runtime
                 this.traceId,
                 "CloseAsync");
 
-            await this.CloseCommunicationListenersAsync(cancellationToken);
+            await this.CloseCommunicationListenersAsync(ReplicaRole.Unknown, cancellationToken);
             ServiceTrace.Source.WriteInfoWithId(
                 TraceType,
                 this.traceId,
@@ -531,8 +532,7 @@ namespace Microsoft.ServiceFabric.Services.Runtime
                     continue;
                 }
 
-                if (replicaRole == ReplicaRole.Primary ||
-                    (replicaRole == ReplicaRole.ActiveSecondary && entry.ListenOnSecondary))
+                if (this.ListenerShouldBeOpen(replicaRole, entry.ListenOnSecondary))
                 {
                     var communicationListener = entry.CreateCommunicationListener(this.serviceContext);
                     if (communicationListener is null)
@@ -547,6 +547,7 @@ namespace Microsoft.ServiceFabric.Services.Runtime
                     {
                         Name = entry.Name.Equals(ServiceInstanceListener.DefaultName) ? "default" : entry.Name,
                         Listener = communicationListener,
+                        ListenOnSecondary = entry.ListenOnSecondary,
                     };
 
                     this.AddCommunicationListener(communicationListenerInfo);
@@ -567,7 +568,7 @@ namespace Microsoft.ServiceFabric.Services.Runtime
             return endpointsCollection;
         }
 
-        private async Task CloseCommunicationListenersAsync(CancellationToken cancellationToken)
+        private async Task CloseCommunicationListenersAsync(ReplicaRole newRole, CancellationToken cancellationToken)
         {
             ServiceTrace.Source.WriteInfoWithId(
                 TraceType,
@@ -579,17 +580,7 @@ namespace Microsoft.ServiceFabric.Services.Runtime
             {
                 try
                 {
-                    foreach (var entry in this.communicationListenersInfo)
-                    {
-                        var traceMsg = $"Closing {entry.Name} communication listener.";
-                        ServiceTrace.Source.WriteInfoWithId(TraceType, this.traceId, traceMsg);
-
-                        var closeCommunicationListenerTask = entry.Listener.CloseAsync(cancellationToken);
-                        await this.serviceHelper.AwaitCloseCommunicationListerWithHealthReporting(this.servicePartition, closeCommunicationListenerTask, entry.Name);
-
-                        traceMsg = $"Closed {entry.Name} communication listener.";
-                        ServiceTrace.Source.WriteInfoWithId(TraceType, this.traceId, traceMsg);
-                    }
+                    await Task.WhenAll(this.communicationListenersInfo.Select(listenerInfo => this.CloseCommunicationListenerAsync(newRole, listenerInfo, cancellationToken)));
                 }
                 catch (Exception exception)
                 {
@@ -653,6 +644,30 @@ namespace Microsoft.ServiceFabric.Services.Runtime
                         aggregateException);
                 }
             }
+        }
+
+        private async Task CloseCommunicationListenerAsync(ReplicaRole newRole, CommunicationListenerInfo listenerInfo, CancellationToken cancellationToken)
+        {
+            if (this.ListenerShouldBeOpen(newRole, listenerInfo.ListenOnSecondary))
+            {
+                var traceNotClosingMsg = $"Not closing {listenerInfo.Name} communication listener because it needs to remain open for {newRole}.";
+                ServiceTrace.Source.WriteInfoWithId(TraceType, this.traceId, traceNotClosingMsg);
+                return;
+            }
+
+            var traceMsg = $"Closing {listenerInfo.Name} communication listener.";
+            ServiceTrace.Source.WriteInfoWithId(TraceType, this.traceId, traceMsg);
+
+            var closeCommunicationListenerTask = listenerInfo.Listener.CloseAsync(cancellationToken);
+            await this.serviceHelper.AwaitCloseCommunicationListerWithHealthReporting(this.servicePartition, closeCommunicationListenerTask, listenerInfo.Name);
+
+            traceMsg = $"Closed {listenerInfo.Name} communication listener.";
+            ServiceTrace.Source.WriteInfoWithId(TraceType, this.traceId, traceMsg);
+        }
+
+        private bool ListenerShouldBeOpen(ReplicaRole replicaRole, bool listenOnSecondary)
+        {
+            return replicaRole == ReplicaRole.Primary || (replicaRole == ReplicaRole.ActiveSecondary && listenOnSecondary);
         }
 
         #endregion

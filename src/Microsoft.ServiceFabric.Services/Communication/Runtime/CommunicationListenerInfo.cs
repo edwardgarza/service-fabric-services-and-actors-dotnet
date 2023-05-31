@@ -13,5 +13,7 @@ namespace Microsoft.ServiceFabric.Services.Communication.Runtime
         internal string Name { get; set; }
 
         internal ICommunicationListener Listener { get; set; }
+
+        internal bool ListenOnSecondary { get; set; }
     }
 }

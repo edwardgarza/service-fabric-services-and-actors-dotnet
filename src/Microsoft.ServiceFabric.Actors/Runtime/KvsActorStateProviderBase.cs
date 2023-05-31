@@ -37,7 +37,7 @@ namespace Microsoft.ServiceFabric.Actors.Runtime
     /// uses <see cref="KeyValueStoreReplica"/> to store and persist the actor state.
     /// </summary>
     public abstract class KvsActorStateProviderBase
-        : IActorStateProvider, VolatileLogicalTimeManager.ISnapshotHandler, IActorStateProviderInternal, IInternalStatefulServiceReplica
+        : IActorStateProvider, VolatileLogicalTimeManager.ISnapshotHandler, IActorStateProviderInternal
     {
         private const string ActorStorageKeyPrefix = "Actor";
         private const string ReminderStorageKeyPrefix = "Reminder";
@@ -835,16 +835,6 @@ namespace Microsoft.ServiceFabric.Actors.Runtime
             {
                 // Ignore exception.
             }
-        }
-
-        /// <summary>
-        /// Gets the replica status.
-        /// </summary>
-        /// <returns>Replica status</returns>
-        object IInternalStatefulServiceReplica.GetStatus()
-        {
-            var internalReplica = this.storeReplica as IInternalStatefulServiceReplica;
-            return internalReplica?.GetStatus();
         }
 
         internal abstract KeyValueStoreReplica OnCreateAndInitializeReplica(
